@@ -1,234 +1,498 @@
 #include <Servo.h>
 #include <LiquidCrystal.h>
 
-// LCD
+// ================= LCD =================
 LiquidCrystal lcd(A0, A1, A2, A3, A4, A5);
 
-// Servo
+// ================= SERVO =================
 Servo door;
 
-// Buttons
-int btnPins[] = {2,3,4,5,6};
-String floorNames[] = {"Basement","Ground","Floor1","Floor2","Floor3"};
+// ================= BUTTONS =================
+int btnPins[] = {2, 3, 4, 5, 6};
+
+String floorNames[] = {
+  "Basement",
+  "Ground",
+  "Floor1",
+  "Floor2",
+  "Floor3"
+};
+
 int emergencyBtn = 7;
 
-// Ultrasonic
+// ================= ULTRASONIC =================
 int trig = 8;
 int echo = 9;
 
-// Other components
+// ================= OTHER COMPONENTS =================
 int servoPin = 10;
 int buzzer = 11;
 int led = 12;
 int motor = 13;
 
-// Queue system
+// ================= QUEUE =================
 int queue[10];
 int qStart = 0;
 int qEnd = 0;
 
 bool emergencyActive = false;
 
-// Current floor (0=Basement, 1=Ground, 2=Floor1, 3=Floor2, 4=Floor3)
-int currentFloor = 1; // Default: Ground
+// Current floor
+// 0 = Basement
+// 1 = Ground
+// 2 = Floor1
+// 3 = Floor2
+// 4 = Floor3
 
-// Tone frequencies for each floor (you can adjust)
-int floorTones[] = {600, 700, 800, 900, 1000}; 
-// Basement, Ground, Floor1, Floor2, Floor3
+int currentFloor = 1;   // Start at Ground Floor
 
-// ================= SETUP =================
-void setup(){
-  lcd.begin(16,2);
+
+// ===================================================
+// SETUP
+// ===================================================
+
+void setup() {
+
+  lcd.begin(16, 2);
+
   door.attach(servoPin);
 
-  for(int i=0;i<5;i++){
+  for (int i = 0; i < 5; i++) {
     pinMode(btnPins[i], INPUT_PULLUP);
   }
 
   pinMode(emergencyBtn, INPUT_PULLUP);
+
   pinMode(trig, OUTPUT);
   pinMode(echo, INPUT);
+
   pinMode(buzzer, OUTPUT);
   pinMode(led, OUTPUT);
   pinMode(motor, OUTPUT);
 
-  // Show default floor at start
-  lcd.print("At:");
-  lcd.setCursor(0,1);
-  lcd.print(floorNames[currentFloor]);
-  delay(2000);
+  // Start with door closed
+  door.write(0);
+
+  // Show starting floor
   lcd.clear();
+  lcd.print("Elevator At:");
+  lcd.setCursor(0, 1);
+  lcd.print(floorNames[currentFloor]);
+
+  delay(2000);
 }
 
-// ================= LOOP =================
-void loop(){
 
-  // read buttons → add to queue
-  for(int i=0;i<5;i++){
-    if(digitalRead(btnPins[i]) == LOW){
+// ===================================================
+// MAIN LOOP
+// ===================================================
+
+void loop() {
+
+  // Check floor buttons
+  for (int i = 0; i < 5; i++) {
+
+    if (digitalRead(btnPins[i]) == LOW) {
+
       addToQueue(i);
-      delay(300); // debounce
+
+      // Button debounce
+      delay(300);
     }
   }
 
-  // emergency check
-  if(digitalRead(emergencyBtn) == LOW){
+
+  // Check emergency button
+  if (digitalRead(emergencyBtn) == LOW) {
     emergencyMode();
   }
 
-  // process queue
-  if(qStart < qEnd && !emergencyActive){
+
+  // Process queue
+  if (qStart < qEnd && !emergencyActive) {
+
     int nextFloor = queue[qStart];
+
     qStart++;
+
     goToFloor(nextFloor);
   }
+
+
+  // Reset queue indexes when all requests are completed
+  if (qStart == qEnd) {
+
+    qStart = 0;
+    qEnd = 0;
+  }
 }
 
-// ================= QUEUE =================
-void addToQueue(int floor){
 
-  lcd.clear();
-  lcd.print("Added:");
-  lcd.setCursor(0,1);
-  lcd.print(floorNames[floor]);
+// ===================================================
+// ADD FLOOR TO QUEUE
+// ===================================================
 
-  queue[qEnd] = floor;
-  qEnd++;
-}
+void addToQueue(int floor) {
 
-// ================= MOVE =================
-void goToFloor(int target){
+  // Prevent queue overflow
+  if (qEnd >= 10) {
 
-  // Decide direction and move floor-by-floor
-  if(target > currentFloor){
-    // Moving up
-    for(int f = currentFloor + 1; f <= target; f++){
-      showMovingTo(f);
-      simulateStep(f); // pass floor index to play tone
-      currentFloor = f;
-    }
-  }
-  else if(target < currentFloor){
-    // Moving down
-    for(int f = currentFloor - 1; f >= target; f--){
-      showMovingTo(f);
-      simulateStep(f); // pass floor index to play tone
-      currentFloor = f;
-    }
-  }
-  else{
-    // Already on the requested floor
     lcd.clear();
-    lcd.print("Already at:");
-    lcd.setCursor(0,1);
-    lcd.print(floorNames[currentFloor]);
-    delay(1500);
-    lcd.clear();
+    lcd.print("Queue Full!");
+
+    delay(1000);
+
     return;
   }
 
+  queue[qEnd] = floor;
+
+  qEnd++;
+
+  lcd.clear();
+  lcd.print("Added:");
+
+  lcd.setCursor(0, 1);
+  lcd.print(floorNames[floor]);
+
+  delay(500);
+}
+
+
+// ===================================================
+// MOVE ELEVATOR
+// ===================================================
+
+void goToFloor(int target) {
+
+  // ================= MOVING UP =================
+
+  if (target > currentFloor) {
+
+    for (int f = currentFloor + 1; f <= target; f++) {
+
+      showMovingTo(f);
+
+      simulateStep();
+
+      currentFloor = f;
+    }
+  }
+
+
+  // ================= MOVING DOWN =================
+
+  else if (target < currentFloor) {
+
+    for (int f = currentFloor - 1; f >= target; f--) {
+
+      showMovingTo(f);
+
+      simulateStep();
+
+      currentFloor = f;
+    }
+  }
+
+
+  // ================= SAME FLOOR =================
+
+  else {
+
+    lcd.clear();
+
+    lcd.print("Already At:");
+
+    lcd.setCursor(0, 1);
+
+    lcd.print(floorNames[currentFloor]);
+
+    playFloorRingtone(currentFloor);
+
+    delay(1000);
+
+    return;
+  }
+
+
+  // Destination reached
   arrive(currentFloor);
 }
 
-// Show "Moving to: <floor>" for each step
-void showMovingTo(int floor){
+
+// ===================================================
+// DISPLAY MOVEMENT
+// ===================================================
+
+void showMovingTo(int floor) {
+
   lcd.clear();
+
   lcd.print("Moving to:");
-  lcd.setCursor(0,1);
+
+  lcd.setCursor(0, 1);
+
   lcd.print(floorNames[floor]);
 }
 
-// Simulate moving one floor and play tone for that floor
-void simulateStep(int floor){
+
+// ===================================================
+// SIMULATE ONE FLOOR MOVEMENT
+// ===================================================
+
+void simulateStep() {
+
   digitalWrite(motor, HIGH);
-  delay(1500); // time to move one floor
+
+  // Simulate elevator travel
+  delay(1500);
+
   digitalWrite(motor, LOW);
 
-  // Play floor-specific tone when passing/arriving at this floor
-  tone(buzzer, floorTones[floor]);
   delay(300);
-  noTone(buzzer);
-
-  delay(500); // small pause between floors
 }
 
-// ================= ARRIVE =================
-void arrive(int floor){
+
+// ===================================================
+// ARRIVAL
+// ===================================================
+
+void arrive(int floor) {
 
   lcd.clear();
+
   lcd.print("Arrived:");
-  lcd.setCursor(0,1);
+
+  lcd.setCursor(0, 1);
+
   lcd.print(floorNames[floor]);
 
-  beep(); // final arrival beep (1kHz)
+
+  // Play unique ringtone for destination
+  playFloorRingtone(floor);
+
+
+  // Open elevator door
   openDoor();
 }
 
-// ================= DOOR SMART =================
-void openDoor(){
 
-  lcd.clear();
-  lcd.print("Door Opening");
+// ===================================================
+// DIFFERENT RINGTONE FOR EACH FLOOR
+// ===================================================
 
-  door.write(90);
-  delay(2000);
+void playFloorRingtone(int floor) {
 
-  // safety check
-  while(getDistance() < 20){
-    lcd.setCursor(0,1);
-    lcd.print("Person detected");
-    delay(500);
+  switch (floor) {
+
+
+    // ================= BASEMENT =================
+
+    case 0:
+
+      // Low tone
+      tone(buzzer, 300, 500);
+      delay(600);
+
+      tone(buzzer, 250, 500);
+      delay(600);
+
+      break;
+
+
+    // ================= GROUND FLOOR =================
+
+    case 1:
+
+      // Two short beeps
+      tone(buzzer, 500, 200);
+      delay(300);
+
+      tone(buzzer, 500, 200);
+      delay(300);
+
+      break;
+
+
+    // ================= FLOOR 1 =================
+
+    case 2:
+
+      // Rising melody
+      tone(buzzer, 500, 200);
+      delay(250);
+
+      tone(buzzer, 700, 200);
+      delay(250);
+
+      tone(buzzer, 900, 350);
+      delay(400);
+
+      break;
+
+
+    // ================= FLOOR 2 =================
+
+    case 3:
+
+      // Different three-note melody
+      tone(buzzer, 784, 200);
+      delay(250);
+
+      tone(buzzer, 988, 200);
+      delay(250);
+
+      tone(buzzer, 1175, 400);
+      delay(450);
+
+      break;
+
+
+    // ================= FLOOR 3 =================
+
+    case 4:
+
+      // Highest floor celebration melody
+      tone(buzzer, 700, 150);
+      delay(200);
+
+      tone(buzzer, 900, 150);
+      delay(200);
+
+      tone(buzzer, 1100, 150);
+      delay(200);
+
+      tone(buzzer, 1300, 400);
+      delay(450);
+
+      break;
   }
 
-  door.write(0);
-  lcd.clear();
-  lcd.print("Door Closed");
-}
-
-// ================= ULTRASONIC =================
-long getDistance(){
-
-  digitalWrite(trig, LOW);
-  delayMicroseconds(2);
-
-  digitalWrite(trig, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trig, LOW);
-
-  long duration = pulseIn(echo, HIGH);
-  return duration * 0.034 / 2;
-}
-
-// ================= BEEP =================
-void beep(){
-  tone(buzzer,1000);
-  delay(200);
   noTone(buzzer);
 }
 
-// ================= EMERGENCY =================
-void emergencyMode(){
+
+// ===================================================
+// SMART DOOR
+// ===================================================
+
+void openDoor() {
+
+  lcd.clear();
+
+  lcd.print("Door Opening");
+
+  // Open door
+  door.write(90);
+
+  delay(2000);
+
+
+  // Check if someone/object is near the door
+  while (getDistance() < 20) {
+
+    lcd.clear();
+
+    lcd.print("Door Blocked!");
+
+    lcd.setCursor(0, 1);
+
+    lcd.print("Please Wait");
+
+    delay(500);
+  }
+
+
+  // Close door
+  door.write(0);
+
+  lcd.clear();
+
+  lcd.print("Door Closed");
+
+  lcd.setCursor(0, 1);
+
+  lcd.print(floorNames[currentFloor]);
+
+  delay(1000);
+}
+
+
+// ===================================================
+// ULTRASONIC SENSOR
+// ===================================================
+
+long getDistance() {
+
+  digitalWrite(trig, LOW);
+
+  delayMicroseconds(2);
+
+  digitalWrite(trig, HIGH);
+
+  delayMicroseconds(10);
+
+  digitalWrite(trig, LOW);
+
+
+  long duration = pulseIn(echo, HIGH, 30000);
+
+
+  // If ultrasonic receives no echo
+  if (duration == 0) {
+
+    return 999;
+  }
+
+
+  long distance = duration * 0.034 / 2;
+
+  return distance;
+}
+
+
+// ===================================================
+// EMERGENCY MODE
+// ===================================================
+
+void emergencyMode() {
 
   emergencyActive = true;
 
-  lcd.clear();
-  lcd.print("!!! EMERGENCY !!!");
 
+  // Stop motor immediately
   digitalWrite(motor, LOW);
+
+
+  // Close door
   door.write(0);
 
-  // clear queue
+
+  // Clear queue
   qStart = 0;
   qEnd = 0;
 
-  while(true){
 
-    tone(buzzer,1200);
-    digitalWrite(led,HIGH);
+  lcd.clear();
+
+  lcd.print("!!! EMERGENCY !!!");
+
+
+  while (true) {
+
+    // First emergency tone
+    tone(buzzer, 1200);
+
+    digitalWrite(led, HIGH);
+
     delay(200);
 
-    tone(buzzer,800);
-    digitalWrite(led,LOW);
+
+    // Second emergency tone
+    tone(buzzer, 800);
+
+    digitalWrite(led, LOW);
+
     delay(200);
   }
 }
